@@ -11,6 +11,7 @@ func main() {
 	db := config.NewDatabase(viperConfig, log)
 	validate := config.NewValidator(viperConfig)
 	app := config.NewFiber(viperConfig)
+	redisClient := config.NewRedis(viperConfig)
 	// producer := config.NewKafkaProducer(viperConfig, log)
 
 	config.Bootstrap(&config.BootstrapConfig{
@@ -19,6 +20,7 @@ func main() {
 		Log:      log,
 		Validate: validate,
 		Config:   viperConfig,
+		Redis:    redisClient,
 		// Producer: producer,
 	})
 
