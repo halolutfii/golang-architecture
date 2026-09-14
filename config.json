@@ -3,7 +3,7 @@
     "name": "golang-clean-architecture"
   },
   "web": {
-    "prefork": false,
+    "prefork": true,
     "port": 3000
   },
   "log": {
