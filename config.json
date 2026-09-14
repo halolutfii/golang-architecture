@@ -9,6 +9,10 @@
   "log": {
     "level": 6
   },
+  "redis": {
+    "host": "localhost:6379",
+    "database": 0
+  },
   "database": {
     "username": "root",
     "password": "secret",
