@@ -1,7 +1,6 @@
 package http
 
 import (
-	"golang-clean-architecture/internal/model"
 	"golang-clean-architecture/internal/usecase"
 
 	"github.com/gofiber/fiber/v2"
@@ -27,5 +26,7 @@ func (c *CategoryController) List(ctx *fiber.Ctx) error {
 		return err
 	}
 
-	return ctx.JSON(model.WebResponse[[]model.CategoryResponse]{Data: responses})
+	ctx.Set("Content-Type", "application/json")
+
+	return ctx.Send([]byte(responses))
 }

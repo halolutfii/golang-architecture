@@ -36,24 +36,26 @@ func NewCategoryUseCase(db *gorm.DB, logger *logrus.Logger, validate *validator.
 
 const categoriesCacheKey = "categories"
 
-func (c *CategoryUseCase) List(ctx context.Context) ([]model.CategoryResponse, error) {
-	// Try to serve from cache first. A cache miss or a Redis outage must NOT
-	// fail the request: we simply fall through to the database.
-	if cached, ok := c.getCategoriesFromCache(ctx); ok {
-		return cached, nil
+func (c *CategoryUseCase) List(ctx context.Context) (string, error) {
+	var responses []model.CategoryResponse
+	// check in redis
+	value, err := c.Redis.Get(ctx, categoriesCacheKey).Result()
+	// if exixst, return the data
+	if err == nil {
+		return value, nil
 	}
 
 	tx := c.DB.WithContext(ctx).Begin()
 	defer tx.Rollback()
 
+	// if not found in redis, query to database
 	// load parent categories
 	parents, err := c.CategoryRepository.FindAllParents(tx)
 	if err != nil {
 		c.Log.WithError(err).Error("failed to load parent categories")
-		return nil, fiber.ErrInternalServerError
+		return "", fiber.ErrInternalServerError
 	}
 
-	var responses []model.CategoryResponse
 	// iterate each parent
 	for _, parent := range parents {
 		response := converter.CategoryToResponse(&parent)
@@ -70,42 +72,17 @@ func (c *CategoryUseCase) List(ctx context.Context) ([]model.CategoryResponse, e
 	}
 
 	// Best-effort cache write. If Redis is down, log and continue.
-	c.saveCategoriesToCache(ctx, responses)
-
-	return responses, nil
-}
-
-// getCategoriesFromCache returns cached categories and true on a cache hit.
-// On a miss or any Redis error, it returns false so the caller falls back to DB.
-func (c *CategoryUseCase) getCategoriesFromCache(ctx context.Context) ([]model.CategoryResponse, bool) {
-	value, err := c.Redis.Get(ctx, categoriesCacheKey).Result()
-	if err != nil {
-		// redis.Nil = normal cache miss; anything else = Redis problem.
-		if err != redis.Nil {
-			c.Log.WithError(err).Warn("failed to read categories from redis, falling back to database")
-		}
-		return nil, false
-	}
-
-	var responses []model.CategoryResponse
-	if err := json.Unmarshal([]byte(value), &responses); err != nil {
-		c.Log.WithError(err).Warn("failed to unmarshal cached categories, falling back to database")
-		return nil, false
-	}
-
-	return responses, true
-}
-
-// saveCategoriesToCache stores categories in Redis. Failures are logged but
-// never returned, so a Redis outage cannot break the endpoint.
-func (c *CategoryUseCase) saveCategoriesToCache(ctx context.Context, responses []model.CategoryResponse) {
-	jsonValue, err := json.Marshal(responses)
+	jsonValue, err := json.Marshal(fiber.Map{
+		"data": responses,
+	})
 	if err != nil {
 		c.Log.WithError(err).Warn("failed to marshal categories for redis")
-		return
+		return "", fiber.ErrInternalServerError
 	}
 
 	if err := c.Redis.Set(ctx, categoriesCacheKey, jsonValue, time.Hour*1).Err(); err != nil {
 		c.Log.WithError(err).Warn("failed to save categories to redis")
 	}
+
+	return string(jsonValue), nil
 }
