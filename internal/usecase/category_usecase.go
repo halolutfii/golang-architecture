@@ -45,15 +45,8 @@ func (c *CategoryUseCase) List(ctx context.Context) ([]model.CategoryResponse, e
 	for _, parent := range parents {
 		response := converter.CategoryToResponse(&parent)
 
-		// load children categories
-		children, err := c.CategoryRepository.FindAllChildren(tx, parent.ID)
-		if err != nil {
-			c.Log.WithError(err).Error("failed to load children categories")
-			return nil, fiber.ErrInternalServerError
-		}
-
 		var childResponses []model.CategoryResponse
-		for _, child := range children {
+		for _, child := range parent.Children {
 			responseChild := converter.CategoryToResponse(&child)
 			childResponses = append(childResponses, responseChild)
 		}
