@@ -4,7 +4,7 @@ import { check } from 'k6';
 // Base URL & token bisa di-override lewat env var:
 //   k6 run -e BASE_URL=http://localhost:3000 -e TOKEN=<token-mu> hello_load_test.js
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
-const TOKEN = __ENV.TOKEN || '6d4b50ee-ad0b-413e-91ae-031220627ae7';
+const TOKEN = __ENV.TOKEN || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHBpcmUiOjE3OTIxMjcwMDM5NDksImlkIjoiTHV0ZmlpIn0.mTKaCY9PftanHwLXLhNXOO_XDfs1Rq0V7sQeutoXamQ';
 
 export const options = {
   stages: [

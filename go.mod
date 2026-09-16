@@ -6,6 +6,7 @@ require (
 	github.com/IBM/sarama v1.46.0
 	github.com/go-playground/validator/v10 v10.27.0
 	github.com/gofiber/fiber/v2 v2.52.9
+	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/sirupsen/logrus v1.9.3

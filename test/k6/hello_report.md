@@ -9,54 +9,56 @@
 | Skenario | ramp 50 VU (10s) → 100 VU (50s) → 0 VU (10s) |
 | Durasi | 1m10s |
 
-## Target vs Hasil (per run)
+## Perbandingan: Token DB Lookup vs JWT
 
-| Target | Threshold | Run 1 | Run 2 | Status akhir |
-|---|---|---|---|---|
-| Response time p95 < 100ms | `p(95)<100` | 118.2ms ❌ | **86.99ms ✓** | ✓ LOLOS |
-| Error rate 0% | `rate==0` | 0.00% ✓ | 0.00% ✓ | ✓ LOLOS |
+| Metrik | DB Lookup (Run 1) | DB Lookup (Run 2) | **JWT** |
+|---|---|---|---|
+| p95 | 118.20ms ❌ | 86.99ms ✓ | **13.93ms ✓** |
+| avg | 67.86ms | 55.57ms | **8.44ms** |
+| median | 58.70ms | 50.17ms | **9.05ms** |
+| min | 39.66ms | 34.07ms | **0s** |
+| max | 233.86ms | 445.06ms | **44.3ms** |
+| throughput | ~942 req/s | ~1.148 req/s | **~7.499 req/s** |
+| total iterations | 65.953 | 80.394 | **524.929** |
+| checks sukses | 94.52% | 98.44% | **100.00%** |
+| error rate | 0.00% | 0.00% | **0.00%** |
+| p95 < 100ms | ❌ | ✓ (tipis) | **✓ (jauh)** |
+| error rate 0% | ✓ | ✓ | **✓** |
 
-## Perbandingan Metrik `http_req_duration`
+## Perbaikan JWT relatif ke DB Lookup
 
-| Metrik | Run 1 | Run 2 |
+| | vs Run 1 (118ms) | vs Run 2 (87ms) |
 |---|---|---|
-| min | 39.66ms | 34.07ms |
-| avg | 67.86ms | **55.57ms** |
-| median | 58.70ms | **50.17ms** |
-| p90 | 102.09ms | **71.11ms** |
-| p95 | 118.20ms | **86.99ms** |
-| max | 233.86ms | 445.06ms |
-| throughput | ~942 req/s | **~1.148 req/s** |
-| total iterations | 65.953 | 80.394 |
-| error rate | 0.00% | 0.00% |
-
-## Detail Checks (Run 2)
-
-| Check | Hasil |
-|---|---|
-| status is 200 | ✓ 100% (semua request sukses) |
-| duration < 100ms | ✗ 96% — 77.887 lolos / 2.507 gagal |
-| `http_req_failed` | 0.00% (0 dari 80.394) |
+| p95 | ~8.5x lebih cepat | ~6.2x lebih cepat |
+| throughput | ~8x lebih banyak | ~6.5x lebih banyak |
 
 ## Analisis
 
-- **Kedua target tercapai di Run 2.** p95 turun dari 118.2ms → 86.99ms (di bawah target 100ms), dan error rate tetap 0%. Semua percentile membaik: median 58→50ms, p90 102→71ms.
+- **JWT lolos kedua target dengan margin besar.** p95 = 13.93ms (jauh di bawah 100ms), error rate 0%, dan **100% checks sukses** dari 1.049.858 checks — tidak ada satu pun request yang melebihi 100ms. Ini kualitas hasil yang jauh lebih baik daripada versi DB lookup yang selalu punya ekor lambat.
 
-- **Kenapa Run 2 lebih baik dari Run 1?** Beban dua run identik, jadi perbedaan ini berasal dari kondisi mesin/lingkungan, bukan perubahan kode. Faktor umum: MySQL sudah "warm" (buffer pool terisi, koneksi ter-reuse), cache OS lebih siap, dan beban latar mesin lebih ringan saat Run 2. Throughput naik ~22% (942 → 1.148 req/s) mendukung ini.
+- **Kenapa JWT jauh lebih cepat?** Perbedaan arsitekturnya fundamental:
+  - **DB lookup (sebelumnya):** setiap request memanggil `FindByToken` → query ke MySQL untuk memvalidasi token. Ini I/O-bound; latency-nya ditentukan round-trip DB dan sensitif terhadap beban DB (terlihat dari variasi Run 1 vs Run 2: 118ms vs 87ms).
+  - **JWT (sekarang):** token divalidasi dengan memverifikasi **signature secara kriptografis di memori**, tanpa menyentuh database. Ini CPU-bound dan sangat cepat, sehingga latency konsisten (median 9ms, p95 14ms, max hanya 44ms).
 
-- **p95 masih dekat batas (87ms vs target 100ms).** Marginnya tipis (~13ms). Karena `/api/hello` melakukan query DB verifikasi token (`FindByToken`) di setiap request, hasilnya sensitif terhadap kondisi MySQL. Run berikutnya bisa saja kembali menembus 100ms jika mesin lebih sibuk — lihat catatan konsistensi di bawah.
+- **Konsistensi jauh lebih baik.** Bandingkan sebaran:
+  - DB lookup: median 50ms → p95 87ms → max 445ms (ekor panjang, tidak stabil).
+  - JWT: median 9ms → p95 14ms → max 44ms (sebaran rapat, stabil).
+  Selisih min-max JWT sangat kecil, tanda tidak ada bottleneck I/O yang bikin outlier.
 
-- **Perhatikan `max = 445ms` di Run 2** (naik dari 234ms di Run 1). Meski p95 lebih baik, ada ekor (outlier) yang lebih lambat — kemungkinan lonjakan sesaat saat koneksi DB rebutan. Karena hanya menyentuh <4% request (yang gagal cek <100ms), tidak memengaruhi p95, tapi menunjukkan latency belum sepenuhnya stabil di ekor.
+- **Throughput naik ~6–8x** (dari ~1.000 ke ~7.500 req/s) dengan VU yang sama, karena tiap request tidak lagi menahan koneksi DB.
 
-## Rekomendasi
+## Kesimpulan
 
-Karena p95 masih menempel di batas dan bergantung kondisi DB, untuk margin yang aman dan stabil:
+Mengganti verifikasi token dari **DB lookup** ke **JWT** menyelesaikan bottleneck utama endpoint `/api/hello`:
 
-1. **Cache token di Redis** (token → user, dengan TTL). Menghilangkan query DB di mayoritas request. Pola ini terbukti menurunkan p95 endpoint categories dari ratusan ms ke belasan ms, dan akan memberi margin jauh di bawah 100ms secara konsisten.
-2. **Pastikan kolom `token` di tabel `users` ter-index**, agar `FindByToken` tidak melakukan full-table scan.
+- p95: **~87–118ms → 14ms** (lolos target 100ms dengan margin besar dan stabil)
+- throughput: **~1.000 → ~7.500 req/s**
+- konsistensi: ekor latency hilang (max 445ms → 44ms)
 
-## Catatan Konsistensi
+Ini pola yang sama seperti perbaikan endpoint categories (dari DB langsung ke cache): **memindahkan verifikasi dari database ke proses in-memory** adalah pengungkit performa terbesar. Dengan JWT, tidak diperlukan lagi query DB per-request maupun cache token di Redis untuk kebutuhan autentikasi ini.
 
-- Dua run dengan beban identik memberi p95 berbeda (118ms vs 87ms). Ini menegaskan bahwa untuk endpoint yang menyentuh DB, **satu run tidak cukup** untuk menyimpulkan lolos/tidak. Disarankan menjalankan 3–5 kali dan mengambil median, atau menetapkan margin target yang cukup (mis. optimasi hingga p95 << 100ms) sebelum menyatakan lolos.
-- Token diberikan via `-e TOKEN=<token>` karena berganti setiap login.
+## Catatan
+
+- Run JWT dijalankan tanpa `-e TOKEN` (script memakai token default). Pastikan token JWT yang dipakai valid dan belum kedaluwarsa saat test agar error rate tetap 0%.
+- Trade-off JWT yang perlu diingat (di luar performa): token JWT tidak bisa langsung "dicabut" di sisi server sebelum expiry, berbeda dengan token DB yang bisa dihapus. Pertimbangkan strategi expiry/refresh atau blocklist bila diperlukan.
 - Throughput bersifat spesifik terhadap mesin test (k6 dan server berjalan di mesin yang sama). Bandingkan tren/rasio, bukan angka absolut lintas mesin.

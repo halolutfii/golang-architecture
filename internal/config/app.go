@@ -7,6 +7,7 @@ import (
 	"golang-clean-architecture/internal/gateway/messaging"
 	"golang-clean-architecture/internal/repository"
 	"golang-clean-architecture/internal/usecase"
+	"golang-clean-architecture/internal/util"
 
 	"github.com/IBM/sarama"
 	"github.com/go-playground/validator/v10"
@@ -39,6 +40,8 @@ func Bootstrap(config *BootstrapConfig) {
 	var contactProducer *messaging.ContactProducer
 	var addressProducer *messaging.AddressProducer
 
+	tokenUtil := util.NewTokenUtil("secret")
+
 	if config.Producer != nil {
 		userProducer = messaging.NewUserProducer(config.Producer, config.Log)
 		contactProducer = messaging.NewContactProducer(config.Producer, config.Log)
@@ -46,7 +49,7 @@ func Bootstrap(config *BootstrapConfig) {
 	}
 
 	// setup use cases
-	userUseCase := usecase.NewUserUseCase(config.DB, config.Log, config.Validate, userRepository, userProducer)
+	userUseCase := usecase.NewUserUseCase(config.DB, config.Log, config.Validate, userRepository, userProducer, tokenUtil)
 	contactUseCase := usecase.NewContactUseCase(config.DB, config.Log, config.Validate, contactRepository, contactProducer)
 	addressUseCase := usecase.NewAddressUseCase(config.DB, config.Log, config.Validate, contactRepository, addressRepository, addressProducer)
 	categoryUseCase := usecase.NewCategoryUseCase(config.DB, config.Log, config.Validate, categoryRepository, config.Redis)
@@ -59,7 +62,7 @@ func Bootstrap(config *BootstrapConfig) {
 	helloController := http.NewHelloController()
 
 	// setup middleware
-	authMiddleware := middleware.NewAuth(userUseCase)
+	authMiddleware := middleware.NewAuth(userUseCase, tokenUtil)
 
 	routeConfig := route.RouteConfig{
 		App:                config.App,
