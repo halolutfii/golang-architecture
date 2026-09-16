@@ -1,0 +1,20 @@
+POST http://localhost:3000/api/users
+Content-Type: application/json
+
+{
+    "id": "Lutfii",
+    "name": "Lutfi",
+    "password": "Lutfii"
+}
+
+# Register
+curl.exe -X POST http://localhost:3000/api/users -H "Content-Type: application/json" -d '{\"id\":\"Lutfii\",\"name\":\"Lutfi\",\"password\":\"Lutfii\"}'
+
+# Login
+curl.exe -X POST http://localhost:3000/api/users/_login -H "Content-Type: application/json" -d '{\"id\":\"Lutfii\",\"password\":\"Lutfii\"}'
+
+# Hello Name
+curl.exe http://localhost:3000/api/hello -H "Authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHBpcmUiOjE3OTIxMjcwMDM5NDksImlkIjoiTHV0ZmlpIn0.mTKaCY9PftanHwLXLhNXOO_XDfs1Rq0V7sQeutoXamQ"
+
+# List categories
+curl.exe http://localhost:3000/api/categories
