@@ -161,7 +161,7 @@ func (c *UserUseCase) Login(ctx context.Context, request *model.LoginUserRequest
 	// 	c.Log.Info("Kafka producer is disabled, skipping user login event")
 	// }
 
-	token, err := c.TokenUtil.CreateToken(&model.Auth{ID: user.ID})
+	token, err := c.TokenUtil.CreateToken(ctx, &model.Auth{ID: user.ID})
 	if err != nil {
 		c.Log.Warnf("Failed to create token : %+v", err)
 		return nil, fiber.ErrInternalServerError

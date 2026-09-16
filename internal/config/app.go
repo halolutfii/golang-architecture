@@ -40,7 +40,11 @@ func Bootstrap(config *BootstrapConfig) {
 	var contactProducer *messaging.ContactProducer
 	var addressProducer *messaging.AddressProducer
 
-	tokenUtil := util.NewTokenUtil("secret")
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: "localhost:6379",
+		DB:   0,
+	})
+	tokenUtil := util.NewTokenUtil("secret", redisClient)
 
 	if config.Producer != nil {
 		userProducer = messaging.NewUserProducer(config.Producer, config.Log)

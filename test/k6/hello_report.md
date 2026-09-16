@@ -8,57 +8,68 @@
 | Tool | k6 (local executor) |
 | Skenario | ramp 50 VU (10s) → 100 VU (50s) → 0 VU (10s) |
 | Durasi | 1m10s |
+| Target | p95 < 100ms, error rate 0% |
 
-## Perbandingan: Token DB Lookup vs JWT
+## Perbandingan 3 Strategi Token Management
 
-| Metrik | DB Lookup (Run 1) | DB Lookup (Run 2) | **JWT** |
+| Metrik | 1. DB Lookup | 2. JWT | 3. JWT + Redis |
 |---|---|---|---|
-| p95 | 118.20ms ❌ | 86.99ms ✓ | **13.93ms ✓** |
-| avg | 67.86ms | 55.57ms | **8.44ms** |
-| median | 58.70ms | 50.17ms | **9.05ms** |
-| min | 39.66ms | 34.07ms | **0s** |
-| max | 233.86ms | 445.06ms | **44.3ms** |
-| throughput | ~942 req/s | ~1.148 req/s | **~7.499 req/s** |
-| total iterations | 65.953 | 80.394 | **524.929** |
-| checks sukses | 94.52% | 98.44% | **100.00%** |
-| error rate | 0.00% | 0.00% | **0.00%** |
-| p95 < 100ms | ❌ | ✓ (tipis) | **✓ (jauh)** |
-| error rate 0% | ✓ | ✓ | **✓** |
-
-## Perbaikan JWT relatif ke DB Lookup
-
-| | vs Run 1 (118ms) | vs Run 2 (87ms) |
-|---|---|---|
-| p95 | ~8.5x lebih cepat | ~6.2x lebih cepat |
-| throughput | ~8x lebih banyak | ~6.5x lebih banyak |
+| p95 | 86.99ms | **13.93ms** | 19.47ms |
+| avg | 55.57ms | **8.44ms** | 11.30ms |
+| median | 50.17ms | **9.05ms** | 11.54ms |
+| max | 445.06ms | 44.30ms | **68.96ms** |
+| throughput | ~1.148 req/s | **~7.499 req/s** | ~5.599 req/s |
+| total iterations | 80.394 | 524.929 | 391.949 |
+| checks sukses | 98.44% | 100.00% | 100.00% |
+| error rate | 0.00% | 0.00% | 0.00% |
+| p95 < 100ms | ✓ (tipis) | ✓ (jauh) | ✓ (jauh) |
+| error rate 0% | ✓ | ✓ | ✓ |
 
 ## Analisis
 
-- **JWT lolos kedua target dengan margin besar.** p95 = 13.93ms (jauh di bawah 100ms), error rate 0%, dan **100% checks sukses** dari 1.049.858 checks — tidak ada satu pun request yang melebihi 100ms. Ini kualitas hasil yang jauh lebih baik daripada versi DB lookup yang selalu punya ekor lambat.
+### Tahap 1 → 2 (DB Lookup → JWT): lompatan performa utama
+Verifikasi token pindah dari **query MySQL per-request** (`FindByToken`, I/O-bound) ke **verifikasi signature di memori** (CPU-bound).
+- p95: 87ms → 14ms (~6x lebih cepat)
+- throughput: ~1.148 → ~7.499 req/s (~6.5x)
+- ekor latency: max 445ms → 44ms (jauh lebih stabil)
 
-- **Kenapa JWT jauh lebih cepat?** Perbedaan arsitekturnya fundamental:
-  - **DB lookup (sebelumnya):** setiap request memanggil `FindByToken` → query ke MySQL untuk memvalidasi token. Ini I/O-bound; latency-nya ditentukan round-trip DB dan sensitif terhadap beban DB (terlihat dari variasi Run 1 vs Run 2: 118ms vs 87ms).
-  - **JWT (sekarang):** token divalidasi dengan memverifikasi **signature secara kriptografis di memori**, tanpa menyentuh database. Ini CPU-bound dan sangat cepat, sehingga latency konsisten (median 9ms, p95 14ms, max hanya 44ms).
+Ini pengungkit terbesar: menghilangkan I/O database dari jalur autentikasi.
 
-- **Konsistensi jauh lebih baik.** Bandingkan sebaran:
-  - DB lookup: median 50ms → p95 87ms → max 445ms (ekor panjang, tidak stabil).
-  - JWT: median 9ms → p95 14ms → max 44ms (sebaran rapat, stabil).
-  Selisih min-max JWT sangat kecil, tanda tidak ada bottleneck I/O yang bikin outlier.
+### Tahap 2 → 3 (JWT → JWT + Redis): Redis menambah overhead, bukan mempercepat
+Temuan penting dan berlawanan dengan intuisi umum "Redis = lebih cepat":
 
-- **Throughput naik ~6–8x** (dari ~1.000 ke ~7.500 req/s) dengan VU yang sama, karena tiap request tidak lagi menahan koneksi DB.
+| | JWT | JWT + Redis | Selisih |
+|---|---|---|---|
+| p95 | 13.93ms | 19.47ms | ~40% lebih lambat |
+| avg | 8.44ms | 11.30ms | ~34% lebih lambat |
+| throughput | 7.499 req/s | 5.599 req/s | ~25% lebih rendah |
+| max | 44.30ms | 68.96ms | ekor lebih panjang |
+
+**Kenapa Redis justru memperlambat di kasus ini?**
+JWT sudah memvalidasi token sepenuhnya di memori — tanpa I/O sama sekali. Menambahkan Redis ke jalur validasi berarti menyisipkan **round-trip jaringan ke Redis** pada operasi yang tadinya murni CPU. Karena tidak ada query DB mahal yang digantikan, Redis hanya menambah latency (network hop), bukan menghematnya.
+
+Ini kebalikan dari kasus endpoint `categories`: di sana Redis menggantikan query DB yang lambat → hemat besar. Pada validasi JWT, tidak ada query DB untuk digantikan → Redis murni jadi overhead.
 
 ## Kesimpulan
 
-Mengganti verifikasi token dari **DB lookup** ke **JWT** menyelesaikan bottleneck utama endpoint `/api/hello`:
+Peringkat performa untuk verifikasi token di endpoint ini:
 
-- p95: **~87–118ms → 14ms** (lolos target 100ms dengan margin besar dan stabil)
-- throughput: **~1.000 → ~7.500 req/s**
-- konsistensi: ekor latency hilang (max 445ms → 44ms)
+1. **JWT saja** — tercepat (p95 14ms), paling stabil (max 44ms), throughput tertinggi (~7.500 req/s).
+2. **JWT + Redis** — sedikit lebih lambat (p95 19ms) karena network hop ke Redis tanpa manfaat menghindari DB.
+3. **DB Lookup** — paling lambat & tidak stabil (p95 87–118ms, max 445ms).
 
-Ini pola yang sama seperti perbaikan endpoint categories (dari DB langsung ke cache): **memindahkan verifikasi dari database ke proses in-memory** adalah pengungkit performa terbesar. Dengan JWT, tidak diperlukan lagi query DB per-request maupun cache token di Redis untuk kebutuhan autentikasi ini.
+Ketiga strategi lolos target (p95 < 100ms, error 0%), tapi **JWT saja adalah pemenang jelas** dari sisi performa.
+
+**Rekomendasi:** untuk verifikasi token murni, gunakan **JWT tanpa Redis**. Menambahkan Redis pada jalur validasi JWT tidak menguntungkan performa dan menambah overhead.
+
+Redis tetap relevan untuk **fungsionalitas**, bukan performa validasi, misalnya:
+- **Blocklist / revocation JWT** (mencabut token sebelum expiry) — Redis dicek hanya untuk token yang di-revoke, memberi kemampuan logout instan yang tidak dimiliki JWT murni.
+- Cache data domain (mis. `categories`) yang menggantikan query DB mahal.
+
+Poin utamanya: keputusan memakai Redis harus berdasar **tujuan** (fungsional vs performa), bukan asumsi "Redis selalu bikin cepat". Untuk JWT, penambahan Redis di sini adalah trade-off antara sedikit overhead latency demi kemampuan revocation — bukan optimasi kecepatan.
 
 ## Catatan
 
-- Run JWT dijalankan tanpa `-e TOKEN` (script memakai token default). Pastikan token JWT yang dipakai valid dan belum kedaluwarsa saat test agar error rate tetap 0%.
-- Trade-off JWT yang perlu diingat (di luar performa): token JWT tidak bisa langsung "dicabut" di sisi server sebelum expiry, berbeda dengan token DB yang bisa dihapus. Pertimbangkan strategi expiry/refresh atau blocklist bila diperlukan.
-- Throughput bersifat spesifik terhadap mesin test (k6 dan server berjalan di mesin yang sama). Bandingkan tren/rasio, bukan angka absolut lintas mesin.
+- Ketiga run memakai skenario dan mesin yang sama; perbandingan relatif valid.
+- Angka bervariasi antar-run (DB Lookup berkisar 87–118ms). Untuk kesimpulan kuat, jalankan tiap strategi 3–5 kali dan ambil median. Selisih JWT vs JWT+Redis konsisten dengan penjelasan arsitektur di beberapa run.
+- Throughput spesifik terhadap mesin test (k6 dan server berjalan di mesin yang sama). Bandingkan tren/rasio, bukan angka absolut lintas mesin.
