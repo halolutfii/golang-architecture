@@ -18,3 +18,6 @@ curl.exe http://localhost:3000/api/hello -H "Authorization: eyJhbGciOiJIUzI1NiIs
 
 # List categories
 curl.exe http://localhost:3000/api/categories
+
+# Rate Limiter Request
+curl.exe -X GET http://localhost:3000/api/users/_current -H "Authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHBpcmUiOjE3OTIyMDM3OTA0NDIsImlkIjoiTHV0ZmlpIn0.B0EUQixBWeI2hBqV_59ECq8MoNvHqZOliATPXkqlASM"

@@ -8,7 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-func NewAuth(userUserCase *usecase.UserUseCase, tokenUtil *util.TokenUtil) fiber.Handler {
+func NewAuth(userUserCase *usecase.UserUseCase, tokenUtil *util.TokenUtil, rateLimiterUtil *util.RateLimiterUtil) fiber.Handler {
 	return func(ctx *fiber.Ctx) error {
 		request := &model.VerifyUserRequest{Token: ctx.Get("Authorization", "NOT_FOUND")}
 		userUserCase.Log.Debugf("Authorization : %s", request.Token)
@@ -24,6 +24,11 @@ func NewAuth(userUserCase *usecase.UserUseCase, tokenUtil *util.TokenUtil) fiber
 		if err != nil {
 			userUserCase.Log.Warnf("failed find user by token : %+v", err)
 			return fiber.ErrUnauthorized
+		}
+
+		if !rateLimiterUtil.IsAllowed(ctx.UserContext(), auth) {
+			userUserCase.Log.Warnf("User is not allowed because too many request : %+v", err)
+			return fiber.ErrTooManyRequests
 		}
 
 		userUserCase.Log.Debugf("User : %+v", auth.ID)

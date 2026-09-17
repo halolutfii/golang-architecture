@@ -65,8 +65,11 @@ func Bootstrap(config *BootstrapConfig) {
 	categoryController := http.NewCategoryController(categoryUseCase, config.Log)
 	helloController := http.NewHelloController()
 
+	// setup redis & rate limiter
+	rateLimiterUtil := util.NewRateLimiterUtil(redisClient)
+
 	// setup middleware
-	authMiddleware := middleware.NewAuth(userUseCase, tokenUtil)
+	authMiddleware := middleware.NewAuth(userUseCase, tokenUtil, rateLimiterUtil)
 
 	routeConfig := route.RouteConfig{
 		App:                config.App,
